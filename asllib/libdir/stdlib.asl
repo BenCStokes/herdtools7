@@ -46,17 +46,26 @@ end
 
 // Externals
 
-func Replicate{M}(x: bits(M), N: integer) => bits(M*N)
+func ReplicateBit(isZero : boolean, N : integer) => bits(N)
 begin
-  var r: bits(M*N) = Zeros(M*N);
-  for i=0 to N-1 do
-    var t: bits(M*N) = [Zeros(((N-1)-i)*M), x, Zeros(i*M)];
-    r = r OR t;
-  end
-  return r;
+  return if isZero then Zeros(N) else Ones(N);
 end
 
-func Len{N}(x :: bits(N)) => integer
+func Replicate{M}(x: bits(M), N: integer) => bits(M*N)
+begin
+  if M == 1 then
+    return ReplicateBit(IsZero(x),N);
+  else
+    var r: bits(M*N) = Zeros(M*N);
+    for i=0 to N-1 do
+      var t: bits(M*N) = [Zeros(((N-1)-i)*M), x, Zeros(i*M)];
+      r = r OR t;
+    end
+    return r;
+  end
+end
+
+func Len{N}(x :: bits(N)) => integer {N}
 begin
   return N;
 end
@@ -69,7 +78,7 @@ begin
       result = result + 1;
     end
   end
-  return result;
+  return result as integer {0..N};
 end
 
 func LowestSetBit{N}(x: bits(N)) => integer{0..N}
@@ -127,7 +136,7 @@ begin
   return if unsigned then ZeroExtend(x, N) else SignExtend(x, N);
 end
 
-func CountLeadingZeroBits{N}(x :: bits(N)) => integer
+func CountLeadingZeroBits{N}(x :: bits(N)) => integer {0..N}
 begin
   return N - 1 - HighestSetBit(x);
 end

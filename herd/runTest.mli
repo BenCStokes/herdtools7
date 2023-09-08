@@ -32,11 +32,11 @@ module type Config = sig
   include Sem.Config
 
   val statelessrc11 : bool
+  val dumpallfaults : bool
   val byte : MachSize.Tag.t
 end
 
 type runfun =
-  CacheType.t option ->
   DirtyBit.t option ->
   float (* start time *) ->
   string (* file name *) ->

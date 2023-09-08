@@ -67,7 +67,10 @@ type t =
 (* Perform experiment *)
   | Exp
 (* Instruction-fetch support (AKA "self-modifying code" mode) *)
-  | Self
+  | Ifetch
+(* CacheType features *)
+  | DIC
+  | IDC
 (* Have cat interpreter to optimise generation of co's *)
   | CosOpt
 (* Test something *)
@@ -85,6 +88,10 @@ type t =
   | ASLType of [`Warn|`Silence|`TypeCheck]
 (* Signed Int128 types *)
   | S128
+(* Strict interpretation of variant, e.g. -variant asl,strict *)
+  | Strict
+(* Semi-strict interpretation of variant, e.g. -variant asl,warn *)
+  | Warn
 
 val compare : t -> t -> int
 val equal : t -> t -> bool

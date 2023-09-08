@@ -1,9 +1,15 @@
 .PHONY: check-deps
 
+OS := $(shell uname)
 PREFIX=$$HOME
 D=dune
+
 #Limit parallelism of some expensive operations
-J=8
+ifeq ($(OS),Darwin)
+	J=$(shell sysctl -n hw.logicalcpu)
+else
+	J=$(shell nproc)
+endif
 
 
 REGRESSION_TEST_MODE = test
@@ -19,8 +25,12 @@ HERD_CATALOGUE_REGRESSION_TEST = _build/default/internal/herd_catalogue_regressi
 
 all: build
 
-build: | check-deps
-	sh ./dune-build.sh $(PREFIX)
+.PHONY: Version.ml
+Version.ml:
+	sh ./version-gen.sh $(PREFIX)
+
+build: Version.ml | check-deps
+	dune build -j $(J) --profile release
 
 install:
 	sh ./dune-install.sh $(PREFIX)
@@ -34,9 +44,8 @@ clean: dune-clean clean-asl-pseudocode
 dune-clean:
 	dune clean
 
-versions:
-	@ sh ./version-gen.sh $(PREFIX)
-	@ dune build -j $(J) --workspace dune-workspace.versions @all
+versions: Version.ml
+	@ dune build -j $(J) --workspace dune-workspace.versions @default
 
 
 # Dependencies.
@@ -186,6 +195,18 @@ arm-test::
 		-litmus-dir ./herd/tests/instructions/ARM \
 		$(REGRESSION_TEST_MODE)
 	@ echo "herd7 ARM instructions tests: OK"
+
+aarch32-test::
+	@ echo
+	$(HERD_REGRESSION_TEST) \
+		-herd-path $(HERD) \
+		-libdir-path ./herd/libdir \
+		-litmus-dir ./herd/tests/instructions/AArch32 \
+		-conf ./herd/tests/instructions/AArch32/aarch32.cfg \
+		$(REGRESSION_TEST_MODE)
+	@ echo "herd7 ARM instructions tests: OK"
+
+test::aarch32-test
 
 test::
 

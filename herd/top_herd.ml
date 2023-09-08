@@ -34,12 +34,12 @@ module type CommonConfig = sig
   include Mem.CommonConfig
   val statelessrc11 : bool
   val skipchecks : StringSet.t
+  val dumpallfaults : bool
 end
 
 module type Config = sig
   include CommonConfig
   val byte : MachSize.sz
-  val cache_type : CacheType.t option
   val dirty : DirtyBit.t option
 end
 
@@ -236,7 +236,7 @@ module Make(O:Config)(M:XXXMem.S) =
 
       let check = check_prop test in
 
-      fun conc fsc (set_pp,vbpp) flags c ->
+      fun conc (st,flts) (set_pp,vbpp) flags c ->
         if not showtoofar && S.gone_toofar conc then
           { c with toofar = true; }
         else if do_observed && not (all_observed test conc) then c
@@ -246,6 +246,8 @@ module Make(O:Config)(M:XXXMem.S) =
           | Some flag -> not (Flag.Set.mem (Flag.Flag flag) flags)
         then c
         else
+          let st = A.map_state A.V.printable st in
+          let fsc = st,flts in
           let ok = check fsc in
           let show_exec =
             let open PrettyConf in
@@ -356,7 +358,9 @@ module Make(O:Config)(M:XXXMem.S) =
       let cstr = T.find_our_constraint test in
 
       let restrict_faults =
-        if A.FaultAtomSet.is_empty test.Test_herd.ffaults then
+        if !Opts.dumpallfaults then
+          Fun.id
+        else if A.FaultAtomSet.is_empty test.Test_herd.ffaults then
           fun _ -> A.FaultSet.empty
         else
           A.FaultSet.filter

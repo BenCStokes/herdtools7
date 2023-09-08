@@ -68,13 +68,8 @@ let _pp_data f (length, data) =
   pp_print_char f 'x';
   String.iter (fun c -> fprintf f "%x" @@ Char.code c) data
 
-let debug bv =
-  Format.fprintf Format.str_formatter "@[%a@]" _pp_data bv ;
-  Format.flush_str_formatter ()
-
 let create_data_bytes length =
-  let n = length / 8 and m = length mod 8 in
-  Bytes.create (if m = 0 then n else n + 1)
+  Bytes.create ((length + 7)/8)
 
 (** [String.for_all] taken directly out of stdlib version 4.13 . *)
 let string_for_all p s =
@@ -218,25 +213,33 @@ let to_int64_unsigned (length, data) =
   let _, data = remask (63, data) in
   to_int64_raw (64, data)
 
-let to_z_unsigned (sz,data) =
-  if sz=0 then Z.zero
+let to_z_unsigned (sz, data) =
+  if sz = 0 then Z.zero
   else
     let rec do_rec r i =
       if i < 0 then r
       else
         let c = String.unsafe_get data i |> Char.code |> Z.of_int in
         let r = Z.logor c (Z.shift_left r 8) in
-        do_rec r (i-1) in
+        do_rec r (i - 1)
+    in
     let n = (sz + 7) / 8 and m = sz mod 8 in
-    let mask = last_char_mask (if m=0 then 8 else m) in
-    let c0 = String.unsafe_get data (n-1) |> Char.code |> (land) mask in
-    do_rec (Z.of_int c0) (n-2)
+    let mask = last_char_mask (if m = 0 then 8 else m) in
+    let c0 = String.unsafe_get data (n - 1) |> Char.code |> ( land ) mask in
+    do_rec (Z.of_int c0) (n - 2)
 
-let to_z_signed (sz,_ as bv) =
+let to_z_signed ((sz, _) as bv) =
   let sgn = sign_bit bv in
   let r = to_z_unsigned bv in
-  if sgn = 0 then r
-  else Z.sub r (Z.shift_left Z.one sz)
+  if sgn = 0 then r else Z.sub r (Z.shift_left Z.one sz)
+
+let z63 = Z.shift_left Z.one 63
+let z64 = Z.shift_left Z.one 64
+
+let printable bv =
+  let z = to_z_signed bv in
+  if Z.geq z z63 then Z.sub z z64
+  else z
 
 let of_string s =
   let result = Buffer.create ((String.length s / 8) + 1) in
@@ -264,21 +267,6 @@ let of_string s =
   else ();
   (length, Buffer.contents result)
 
-let of_int_sized length s =
-  let n = length / 8 and m = length mod 8 in
-  let result = Bytes.make (if m = 0 then n else n + 1) char_0 in
-  for i = 0 to n - 1 do
-    let c = (s lsr (8 * i)) land 255 in
-    Bytes.set result i (Char.chr c)
-  done;
-  if m <> 0 then
-    let c = (s lsr (8 * n)) land 255 in
-    Bytes.set result n (Char.chr c)
-  else ();
-  (length, Bytes.unsafe_to_string result)
-
-let _of_int = of_int_sized (Sys.int_size - 1)
-
 let of_int64 s =
   let result = create_data_bytes 64 in
   for i = 0 to 7 do
@@ -290,17 +278,19 @@ let of_int64 s =
 let of_int x = of_int64 (Int64.of_int x)
 
 let of_z sz z =
-  let n = (sz+7) / 8 and m = sz mod 8 in
+  let n = (sz + 7) / 8 and m = sz mod 8 in
   let result = Bytes.make n char_0 in
   let rec do_rec msk i =
-    if i >= 0 then begin
-      let c = Z.extract z (i*8) 8 |> Z.to_int |> (land) msk |> Char.chr in
-      Bytes.unsafe_set result i c ;
-      do_rec 0xFF (i-1)
-    end in
-  let msk = last_char_mask (if m=0 then 8 else m) in
-  do_rec msk (n-1) ;
-  sz,Bytes.unsafe_to_string result
+    if i >= 0 then (
+      let c = Z.extract z (i * 8) 8 |> Z.to_int |> ( land ) msk |> Char.chr in
+      Bytes.unsafe_set result i c;
+      do_rec 0xFF (i - 1))
+  in
+  let msk = last_char_mask (if m = 0 then 8 else m) in
+  do_rec msk (n - 1);
+  (sz, Bytes.unsafe_to_string result)
+
+let of_int_sized sz i = of_z sz (Z.of_int i)
 
 (* --------------------------------------------------------------------------
 
@@ -341,7 +331,7 @@ let logor = bitwise_op ( lor )
 let logxor bv1 bv2 = bitwise_op ( lxor ) bv1 bv2 |> remask
 
 let equal bv1 bv2 =
-  if false then Format.eprintf "@[%a =@ %a@]@." _pp_data bv1 _pp_data bv2 ;
+  if false then Format.eprintf "@[%a =@ %a@]@." _pp_data bv1 _pp_data bv2;
   length bv1 == length bv2
   && (* let bv1 = remask bv1 and bv2 = remask bv2 in *)
   String.equal (data bv1) (data bv2)
@@ -422,62 +412,111 @@ let write_slice (length_dst, data_dst) (length_src, data_src) positions =
   let () = List.iteri copy_bit_here positions in
   remask (length_dst, Bytes.unsafe_to_string result)
 
-let read_char_offset offset =
-  let next_mask = last_char_mask offset in
-  let offset' = 8 - offset in
-  fun prec_c next_c ->
-    let prec_bits = (Char.code prec_c lsr offset') land 0xff
-    and next_bits = (Char.code next_c land next_mask) lsl offset in
-    next_bits lor prec_bits |> Char.chr
 
 (* Retuns length of destination *)
-let copy_into dst (length_src, data_src) offset =
+let pp (l,bs) =
+  Printf.sprintf "%s<%d>"
+    (to_string (l,Bytes.to_string bs)) l
+
+let pp_bytes n dst =
+  let sz = (n+1)*8 in
+  pp (sz,dst)
+
+(* [mix_chars_start off low_c high_c] return a char,
+   whose off lower order bits are from low_c and
+   the 8-off higher order bits are the  8-off lower
+   order bits of high_c *)
+let mix_chars_start off low_c high_c =
+  let low_bits = (1 lsl off-1) land (Char.code low_c)
+  and high_bits = (Char.code high_c) lsl off in
+  low_bits lor high_bits |> (land) 0xff |> Char.chr
+
+(* [mix_chars_body off low_c high_c] return a char,
+   whose off lower order bits are  the off higher
+   order bits of low_c and the 8-off higher order bits are the
+   8-off lower order bits of high_c *)
+let mix_chars_body off low_c high_c =
+  let low_bits =  (Char.code low_c) lsr (8-off)
+  and high_bits = (Char.code high_c) lsl off in
+  low_bits lor high_bits |>  (land) 0xff |> Char.chr
+
+(* [mix_chars_final off c] return a char,
+   whose sz lower order bits are the
+   sz bits of c at possition off. *)
+let mix_char_final off sz c =
+  (Char.code c lsr off) land (1 lsl sz-1)  |> Char.chr
+
+let copy_into dst (length_src, data_src as b) offset =
+  let () =
+    if false then
+      Printf.eprintf "copy_into %s + %s, offset=%d\n%!"
+        (to_string b)
+        (pp (offset,dst))
+        offset in
   let length_dst = offset + length_src in
   if length_src <= 0 then length_dst
   else
-    let n_src = length_src / 8 and m_src = length_src mod 8 in
-    let n_dst = length_dst / 8 and m_dst = length_dst mod 8 in
     let n_off = offset / 8 and m_off = offset mod 8 in
     let () =
       if m_off = 0 then
         Bytes.blit_string data_src 0 dst n_off (String.length data_src)
       else
-        (* We have an offset of m_off on every char.
-
-           First handle the last written char, by hand because no offset has to
-           be applied to the read character. *)
+        (*
+         * First handle the  first written char:
+         * The 8-m_off low order bits of src.[0] are
+         *  copied into the 8-m_off high order_bits of
+         *  dst.[n_off] *)
         let prec_c = Bytes.get dst n_off and next_c = String.get data_src 0 in
-        let prec_bits = Char.code prec_c land last_char_mask m_off
-        and next_bits = (Char.code next_c lsl m_off) land 0xff in
-        next_bits lor prec_bits |> Char.chr |> Bytes.set dst n_off;
-
-        (* Next body *)
-        for i = n_off + 1 to n_dst - 2 do
-          (* 0 already handled, n2 - 1 handled after *)
-          let i_src = i - n_off in
-          let prec_c = String.get data_src i_src in
-          let next_c = String.get data_src (i_src + 1) in
-          Bytes.set dst i @@ read_char_offset m_off prec_c next_c
-        done;
-
-        (* Last written char *)
-        if m_dst != 0 && n_dst > n_off then
-          if m_dst > m_src then
-            let prec_c = String.get data_src (n_src - 1)
-            and next_c =
-              if m_src != 0 then String.get data_src n_src else char_0
-            in
-            Bytes.set dst n_dst @@ read_char_offset m_off prec_c next_c
-          else
-            let prec_c = String.get data_src n_src and next_c = char_0 in
-            Bytes.set dst n_dst @@ read_char_offset m_off prec_c next_c
-    in
+        mix_chars_start m_off prec_c next_c |> Bytes.set dst n_off ;
+        let () =
+          if false then
+            Printf.eprintf "Start: %s\n%!"
+              (pp_bytes n_off dst) in
+        (*
+         * Now, loop.
+         * At each step, 8-off bits are taken from
+         * the higher order bits of some source char,
+         * while the off higher order bits are taken from the
+         * lower order bits of the next_char
+         *)
+        (* Number of bits still to write *)
+        let rem_bits = length_src - (8-m_off) in
+        (* Useful string length *)
+        let src_str_len = (length_src+7) / 8 in
+        let rec do_rec  i_src i_dst rem_bits =
+          if i_src+1 >= src_str_len then
+            i_src,i_dst,rem_bits
+          else begin
+            let prec_c = String.get data_src i_src in
+            let next_c = String.get data_src (i_src + 1) in
+            mix_chars_body (m_off) prec_c next_c |> Bytes.set dst i_dst;
+            let () =
+              if false then
+                Printf.eprintf "Body  -> %s\n%!" (pp_bytes i_dst dst) in
+            do_rec (i_src+1) (i_dst+1) (rem_bits-8)
+          end in
+       let i_src,i_dst,rem_bits = do_rec 0 (n_off+1) rem_bits in
+       let () =
+         if false then
+           Printf.eprintf "i_src=%d, i_dst=%d, rem_bits=%d\n%!"
+             i_src i_dst rem_bits in
+       if rem_bits > 0 then begin
+         let c = String.get data_src i_src in
+         mix_char_final (8-m_off) rem_bits c |> Bytes.set dst i_dst
+       end in
+    let () =
+      if false then
+        Printf.eprintf "copy_into %s + %s ->%s\n%!"
+          (to_string b)
+          (pp (offset,dst))
+          (pp (length_dst, dst)) in
     length_dst
 
 let concat bvs =
-  (if false then
-     let pp = List.map to_string bvs in
-     Printf.eprintf "Concat %s\n%!" (String.concat "," pp));
+  if false then begin
+    let pp = List.map to_string bvs in
+    Printf.eprintf "Concat %s\n%!" (String.concat "," pp)
+  end ;
   let length = List.fold_left (fun acc bv -> acc + length bv) 0 bvs in
   let result = create_data_bytes length in
   let _ = List.fold_right (copy_into result) bvs 0 in
@@ -496,7 +535,7 @@ let zeros length =
 
 let ones length =
   let n = length / 8 and m = length mod 8 in
-  let data = String.make (if m = 0 then n else n + 1) (Char.chr 0xff) in
+  let data = String.make (if m = 0 then n else n + 1) char_ff in
   remask (length, data)
 
 let zero = zeros 1
@@ -506,3 +545,65 @@ let empty = (0, "")
 let is_zeros bv =
   let _length, data = remask bv in
   string_for_all (( = ) char_0) data
+
+let is_ones bv = length bv |> ones |> equal bv
+
+type mask = {
+  length : int;
+  set : string;
+  unset : string;
+  specified : string;
+  initial_string : string;
+}
+
+let mask_length mask = mask.length
+
+let mask_of_string s =
+  let length_set, set =
+    String.map (function 'x' -> '0' | '0' -> '0' | '1' -> '1' | c -> c) s
+    |> of_string
+  and length_unset, unset =
+    String.map (function 'x' -> '0' | '0' -> '1' | '1' -> '0' | c -> c) s
+    |> of_string
+  and length_specified, specified =
+    String.map (function 'x' -> '0' | '0' -> '1' | '1' -> '1' | c -> c) s
+    |> of_string
+  in
+  let () =
+    if false then
+      Format.eprintf "Parsing %s gave %a and %a@." s _pp_data (length_set, set)
+        _pp_data (length_unset, unset)
+  in
+  if length_set != length_unset || length_set != length_specified then
+    raise (Invalid_argument "Mask")
+  else { length = length_set; set; unset; specified; initial_string = s }
+
+let matches bv mask =
+  if length bv != mask.length then raise (Invalid_argument "mask_matches");
+  equal
+    (mask.length, mask.specified)
+    (logor
+       (logand bv (mask.length, mask.set))
+       (logand (lognot bv) (mask.length, mask.unset)))
+
+let mask_to_string mask = mask.initial_string
+
+let mask_to_canonical_string mask =
+  let set = to_string (mask.length, mask.set)
+  and unset = to_string (mask.length, mask.unset) in
+  let result = Bytes.create (String.length set) in
+  for i = 0 to String.length set - 1 do
+    let b =
+      match (String.get set i, String.get unset i) with
+      | '0', '0' -> 'x'
+      | '1', _ -> '1'
+      | _, '1' -> '0'
+      | c, _ -> c
+    in
+    Bytes.set result i b
+  done;
+  Bytes.unsafe_to_string result
+
+let mask_set mask = (mask.length, mask.set)
+let mask_unset mask = (mask.length, mask.unset)
+let mask_specified mask = (mask.length, mask.specified)

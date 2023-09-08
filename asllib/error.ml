@@ -3,14 +3,15 @@ open AST
 type error_desc =
   | BadField of string * ty
   | BadFields of string list * ty
+  | BadSlices of slice list * int
   | TypeInferenceNeeded
   | UndefinedIdentifier of identifier
   | MismatchedReturnValue of string
   | BadArity of identifier * int * int
-  | UnsupportedBinop of binop * value * value
-  | UnsupportedUnop of unop * value
+  | UnsupportedBinop of binop * literal * literal
+  | UnsupportedUnop of unop * literal
   | UnsupportedExpr of expr
-  | MismatchType of value * type_desc list
+  | MismatchType of string * type_desc list
   | NotYetImplemented of string
   | ConflictingTypes of type_desc list * ty
   | AssertionFailed of expr
@@ -25,6 +26,9 @@ type error_desc =
   | AssignToImmutable of string
   | AlreadyDeclaredIdentifier of string
   | BadReturnStmt of ty option
+  | UnexpectedSideEffect of string
+  | UncaughtException of string
+  | OverlappingSlices of slice list
 
 type error = error_desc annotated
 
@@ -58,24 +62,24 @@ let pp_error =
         fprintf f
           "ASL Execution error: Illegal application of operator %s for values@ \
            %a@ and %a."
-          (binop_to_string op) pp_value v1 pp_value v2
+          (binop_to_string op) pp_literal v1 pp_literal v2
     | UnsupportedUnop (op, v) ->
         fprintf f
           "ASL Execution error: Illegal application of operator %s for value@ \
            %a."
-          (unop_to_string op) pp_value v
+          (unop_to_string op) pp_literal v
     | UnsupportedExpr e ->
         fprintf f "ASL Error: Unsupported expression %a." pp_expr e
     | MismatchType (v, [ ty ]) ->
         fprintf f
-          "ASL Execution error: Mismatch type:@ value %a does not belong to \
+          "ASL Execution error: Mismatch type:@ value %s does not belong to \
            type %a."
-          pp_value v pp_type_desc ty
+          v pp_type_desc ty
     | MismatchType (v, li) ->
         fprintf f
-          "ASL Execution error: Mismatch type:@ value %a@ does not subtype any \
+          "ASL Execution error: Mismatch type:@ value %s@ does not subtype any \
            of those types:@ %a"
-          pp_value v
+          v
           (pp_comma_list pp_type_desc)
           li
     | BadField (s, ty) ->
@@ -87,6 +91,11 @@ let pp_error =
           pp_ty ty
           (pp_print_list ~pp_sep:pp_print_space pp_print_string)
           fields
+    | BadSlices (slices, length) ->
+        fprintf f
+          "ASL Typing error: Cannot extract from bitvector of length %d slices \
+           %a."
+          length pp_slice_list slices
     | TypeInferenceNeeded ->
         pp_print_text f
           "ASL Internal error: Interpreter blocked. Type inference needed."
@@ -153,7 +162,12 @@ let pp_error =
           x
     | BadReturnStmt None ->
         fprintf f
-          "ASL Typing error:@ cannot@ return@ something@ from@ a@ procedure@."
+          "ASL Typing error:@ cannot@ return@ something@ from@ a@ procedure."
+    | UnexpectedSideEffect s -> fprintf f "Unexpected side-effect: %s" s
+    | UncaughtException s -> fprintf f "Uncaught exception: %s" s
+    | OverlappingSlices slices ->
+        fprintf f "ASL Typing error:@ overlapping slices@ @[%a@]." pp_slice_list
+          slices
     | BadReturnStmt (Some t) ->
         fprintf f
           "ASL Typing error:@ cannot@ return@ nothing@ from@ a@ function,@ an@ \

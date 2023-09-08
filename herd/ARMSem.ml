@@ -26,6 +26,7 @@ module
     module Act = MachAction.Make(C.PC)(ARM)
     include SemExtra.Make(C)(ARM)(Act)
 
+    let aexp = ARM.Exp    (* Explicit accesses *)
 (* Barrier pretty print *)
     let  dmb =
       ARMBase.fold_barrier_option
@@ -88,40 +89,65 @@ module
       and nat_sz = V.Cst.Scalar.machsize
 
       let mk_read ato sz loc v =
-        Act.Access (Dir.R, loc, v, ato,(), sz, Act.access_of_location_std loc)
+        Act.Access (Dir.R, loc, v, ato,ARM.Exp, sz, Act.access_of_location_std loc)
 
       let read_reg is_data r ii =
         M.read_loc is_data
-          (mk_read false reg_sz)
+          (mk_read ARM.N reg_sz)
           (A.Location_reg (ii.A.proc,r)) ii
 
       let read_reg_ord = read_reg false
       let read_reg_data = read_reg true
 
       let read_mem sz a ii  =
-        M.read_loc false (mk_read false sz) (A.Location_global a) ii
+        M.read_loc false (mk_read ARM.N sz) (A.Location_global a) ii
       let read_mem_atomic sz a ii =
-        M.read_loc false (mk_read true sz) (A.Location_global a) ii
+        M.read_loc false (mk_read ARM.X sz) (A.Location_global a) ii
+
+      let do_read_mem_ret sz an anexp ac a ii =
+        let mk_act loc v =  Act.Access (Dir.R,loc,v,an,anexp,sz,ac) in
+        let loc = A.Location_global a in
+        M.read_loc false mk_act loc ii
 
       let write_loc sz loc v ii =
         let ac = Act.access_of_location_std loc in
-        M.mk_singleton_es (Act.Access (Dir.W, loc, v, false, (), sz, ac)) ii
+        M.mk_singleton_es (Act.Access (Dir.W, loc, v, ARM.N, ARM.Exp, sz, ac)) ii
 
       let write_reg r v ii =
         M.mk_singleton_es
-          (Act.Access (Dir.W, (A.Location_reg (ii.A.proc,r)), v, false, ARM.exp_annot, reg_sz, Access.REG))
+          (Act.Access (Dir.W, (A.Location_reg (ii.A.proc,r)), v, ARM.N, ARM.exp_annot, reg_sz, Access.REG))
           ii
 
       let write_mem sz a v ii  =
         M.mk_singleton_es
-          (Act.Access (Dir.W, A.Location_global a, v, false, (), sz, Access.VIR))
+          (Act.Access (Dir.W, A.Location_global a, v, ARM.N, ARM.Exp, sz, Access.VIR))
           ii
+
+      (* Acquire / release semantics like AArch64 *)
+      let do_read_mem sz an anexp ac rd a ii =
+        do_read_mem_ret sz an anexp ac a ii
+        >>= fun v -> write_reg rd v ii
+        >>= fun () -> B.nextT
+
+      let read_mem_acquire sz = do_read_mem sz ARM.A aexp Access.VIR
+      let read_mem_acquire_ex sz = do_read_mem sz ARM.XA aexp Access.VIR
 
       let write_mem_atomic sz a v resa ii =
         let eq = [M.VC.Assign (a,M.VC.Atom resa)] in
         M.mk_singleton_es_eq
-          (Act.Access (Dir.W, A.Location_global a, v, true, (), sz, Access.VIR))
+          (Act.Access (Dir.W, A.Location_global a, v, ARM.X, ARM.Exp, sz, Access.VIR))
           eq ii
+
+      let write_mem_atomic_release sz a v resa ii =
+        let eq = [M.VC.Assign (a,M.VC.Atom resa)] in
+        M.mk_singleton_es_eq
+          (Act.Access (Dir.W, A.Location_global a, v, ARM.XL, ARM.Exp, sz, Access.VIR))
+          eq ii
+
+      let write_mem_release sz a v ii  =
+        M.mk_singleton_es
+          (Act.Access (Dir.W, A.Location_global a, v, ARM.L, ARM.Exp, sz, Access.VIR))
+          ii
 
       let write_flag r o v1 v2 ii =
         M.addT
@@ -219,6 +245,13 @@ module
                    >>|
                    write_flags set vres (V.intToV 0) ii))
                 >>= B.next2T
+          | ARM.I_ANDC (c,rd,rs,rs2) ->
+              let andc ii = ((read_reg_ord rs ii) >>| (read_reg_ord rs2 ii)
+                 >>=
+               (fun (v1,v2) -> M.op Op.And v1 v2)
+                 >>=
+               (fun vres -> write_reg rd vres ii)) in
+              checkZ andc c ii
           | ARM.I_ORR (set,rd,rs,v) ->
               ((read_reg_ord  rs ii)
                  >>=
@@ -334,12 +367,37 @@ module
                   (read_mem_atomic nat_sz vn ii >>=
                    fun v -> write_reg  rt v ii)) in
               ldr ii >>= B.next2T
+          |  ARM.I_LDAEX (rt,rn) ->
+              (read_reg_ord rn ii)
+                >>=
+              (fun vn ->
+                write_reg ARM.RESADDR vn ii >>|
+                (read_mem_acquire_ex nat_sz rt vn ii))
+                >>= fun (_,_) -> B.nextT
+          |  ARM.I_LDA (rt,rn) ->
+              (read_reg_ord rn ii)
+                  >>=
+              fun vn ->
+                read_mem_acquire nat_sz rt vn ii
+                  >>=
+              fun _ -> B.nextT
           |  ARM.I_LDR3 (rt,rn,rm,c) ->
               let ldr3 ii =
                 ((read_reg_ord  rn ii) >>| (read_reg_ord  rm ii))
                   >>=
                 (fun (vn,vm) ->
                   (M.add vn vm) >>=
+                  (fun vaddr ->
+                    (read_mem nat_sz vaddr ii) >>=
+                    (fun v -> write_reg  rt v ii))) in
+              checkZ ldr3 c ii
+          |  ARM.I_LDR3_S (rt,rn,rm,ARM.S_LSL k, c) ->
+              let ldr3 ii =
+                ((read_reg_ord  rn ii) >>| (read_reg_ord  rm ii))
+                  >>=
+                (fun (vn,vm) ->
+                  (M.op1 (Op.LeftShift k) vm)
+                  >>= fun vm -> (M.add vn vm) >>=
                   (fun vaddr ->
                     (read_mem nat_sz vaddr ii) >>=
                     (fun v -> write_reg  rt v ii))) in
@@ -352,6 +410,14 @@ module
                   let a = vn in
                   (write_mem nat_sz a vt ii)) in
               checkZ str c ii
+          |  ARM.I_STL (rt,rn,c) ->
+              let str ii =
+                ((read_reg_ord  rn ii) >>| (read_reg_data  rt ii))
+                  >>=
+                (fun (vn,vt) ->
+                  let a = vn in
+                  (write_mem_release nat_sz a vt ii)) in
+              checkZ str c ii
           |  ARM.I_STR3 (rt,rn,rm,c) ->
               let str3 ii =
                 (((read_reg_ord  rm ii) >>|
@@ -360,6 +426,17 @@ module
                    >>=
                  (fun (vm,(vn,vt)) ->
                    (M.add vn vm) >>=
+                   (fun a ->
+                     (write_mem nat_sz a vt ii)))) in
+              checkZ str3 c ii
+          |  ARM.I_STR3_S (rt,rn,rm,ARM.S_LSL k, c) ->
+              let str3 ii =
+                (((read_reg_ord  rm ii) >>|
+                ((read_reg_ord  rn ii) >>|
+                (read_reg_data  rt ii)))
+                   >>=
+                 (fun (vm,(vn,vt)) -> (M.op1 (Op.LeftShift k) vm)
+                   >>= fun vm -> (M.add vn vm) >>=
                    (fun a ->
                      (write_mem nat_sz a vt ii)))) in
               checkZ str3 c ii
@@ -373,6 +450,16 @@ module
                     ((write_reg r1 V.zero ii >>|
                     write_mem_atomic nat_sz a v resa ii) >>! ())) >>! () in
               checkZ strex c ii
+          | ARM.I_STLEX (r1,r2,r3) ->
+              let stlex ii =
+                (read_reg_ord ARM.RESADDR ii >>| read_reg_data r2 ii >>| read_reg_ord r3 ii) >>=
+                fun ((resa,v),a) ->
+                  (write_reg ARM.RESADDR V.zero ii >>|
+                  M.altT
+                    (write_reg r1 V.one ii)
+                    ((write_reg r1 V.zero ii >>|
+                    write_mem_atomic_release nat_sz a v resa ii) >>! ())) >>! () in
+              checkZ stlex ARM.AL ii
           | ARM.I_MOV (rd, rs, c) ->
               let mov ii =
                 read_reg_ord  rs ii >>=
@@ -381,16 +468,16 @@ module
           | ARM.I_MOVI (rt, i, c) ->
               let movi ii =  write_reg  rt (V.intToV i) ii in
               checkZ movi c ii
-          | ARM.I_MOVW (rt, k) ->
+          | ARM.I_MOVW (rt, k, c) ->
               assert (MachSize.is_imm16 k);
               let movi ii =  write_reg  rt (V.intToV k) ii in
-              checkZ movi ARM.AL ii
-          | ARM.I_MOVT (rt, k) ->
+              checkZ movi c ii
+          | ARM.I_MOVT (rt, k, c) ->
               assert (MachSize.is_imm16 k);
               let movi ii =
                 M.op1 (Op.LeftShift 16) (V.intToV k)
                 >>= fun k -> write_reg  rt k ii in
-              checkZ movi ARM.AL ii
+              checkZ movi c ii
           | ARM.I_XOR (set,r3,r1,r2) ->
               (((read_reg_ord  r1 ii) >>| (read_reg_ord r2 ii))
                  >>=

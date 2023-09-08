@@ -10,14 +10,9 @@
 // MPAMinfo GenMPAMatEL(AccessType acctype, bits(2) el)
 func GenMPAMatEL(acctype:: AccessType, el::bits(2)) => MPAMinfo
 begin
-  return UNKNOWN :: MPAMinfo;
+  var x : MPAMinfo;
+  return x;
 end
-
-getter TSTATE[] => TMState
-begin
-  return UNKNOWN :: TMState;
-end
-
 
 // IsAligned
 
@@ -45,7 +40,8 @@ end
 
 func AArch64_TranslateAddress(address::bits(64), accdesc::AccessDescriptor, aligned::boolean, size::integer) => AddressDescriptor
 begin
-  return CreateAddressDescriptor(address, UNKNOWN :: FullAddress, NormalNCMemAttr());
+  var full_addr : FullAddress;
+  return CreateAddressDescriptor(address, full_addr, NormalNCMemAttr());
 end
 
 func ELStateUsingAArch32K(el::bits(2), secure::boolean) => (boolean, boolean)
@@ -63,7 +59,7 @@ type ProcState of bits(64) {
     [2] Z,        // Zero condition flag
     [1] C,        // Carry condition flag
     [0] V,        // Overflow condition flag
-    [3] D,        // Debug mask bit                     [AArch64 only]
+    [4] D,        // Debug mask bit                     [AArch64 only]
     [5] A,        // SError interrupt mask bit
     [6] I,        // IRQ mask bit
     [7] F,        // FIQ mask bit
@@ -73,7 +69,7 @@ type ProcState of bits(64) {
     [11] DIT,      // Data Independent Timing            [v8.4]
     [12] TCO,      // Tag Check Override                 [v8.5, AArch64 only]
     [13] PM,       // PMU exception Mask
-    [14] PPEND,     // synchronous PMU exception to be observed
+    [14] PPEND,     // synchronous PMU exception to be_observed
     [16:15] BTYPE,    // Branch Type                        [v8.5]
     [17] ZA,       // Accumulation array enabled         [SME]
     [18] SM,       // Streaming SVE mode enabled         [SME]
@@ -92,4 +88,6 @@ type ProcState of bits(64) {
     [42] E,        // Endianness bit                     [AArch32 only]
     [47:42] M         // Mode field                         [AArch32 only]
 };
+
+var PSTATE : ProcState;
 

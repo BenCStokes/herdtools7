@@ -3,65 +3,139 @@ module Rule = struct
     | Lit
     | IgnoreTypedExpr
     | ELocalVar
-    | GlobalConst
+    | EGlobalVar
+    | EUndefIdent
     | Binop
     | Unop
+    | ECondSimple
     | ECond
     | ESlice
     | ECall
+    | EGetArray
     | ERecord
-    | GetRecordField
-    | GetBitFields
-    | GetBitField
+    | EGetBitField
+    | EGetBitFields
     | EConcat
+    | EUnknown 
+    | EPattern
     | LEIgnore
     | LETyped
     | LELocalVar
+    | LEGlobalVar
+    | LEUndefIdentV0
+    | LEUndefIdentV1
     | LESlice
-    | LESetRecordField
-    | LESetBitField
-    | LESetBitFields
-    | LETupleUnpack
-    | Pass
-    | Assign
-    | ReturnOne
-    | ReturnNone
-    | Then
+    | LESetArray
+    | LESetField
+    | LESetFields
+    | LETuple
+    | PAll
+    | PAny
+    | PGeq
+    | PLeq
+    | PNot
+    | PRange
+    | PSingle
+    | PMask
+    | PTuple
+    | LDIgnore
+    | LDVar
+    | LDTypedVar
+    | LDUninitialisedVar
+    | LDTuple
+    | LDTypedTuple
+    | LDUninitialisedTuple
+    | SPass
+    | SAssignCall
+    | SAssignTuple
+    | SAssign
+    | SReturnOne
+    | SReturnSome
+    | SReturnNone
+    | SThen
     | SCall
     | SCond
-    | Assert
+    | SCase
+    | SAssert
+    | SWhile
+    | SRepeat
+    | SFor
+    | SThrowNone
+    | SThrowSomeTyped
+    | SThrowSome
+    | STry
+    | SDeclSome
+    | SDeclNone
+    | SDebug
 
   let to_string : t -> string = function
     | Lit -> "Lit"
     | IgnoreTypedExpr -> "IgnoreTypedExpr"
     | ELocalVar -> "ELocalVar"
-    | GlobalConst -> "GlobalConst"
+    | EGlobalVar -> "EGlobalVar"
     | Binop -> "Binop"
     | Unop -> "Unop"
     | ECond -> "ECond"
     | ESlice -> "ESlice"
     | ECall -> "ECall"
     | ERecord -> "ERecord"
-    | GetRecordField -> "GetRecordField"
-    | GetBitFields -> "GetBitFields"
-    | GetBitField -> "GetBitField"
+    | EGetBitField -> "EGetBitField"
+    | EGetBitFields -> "EGetBitFields"
     | EConcat -> "EConcat"
+    | EUndefIdent -> "EUndefIdent"
+    | ECondSimple -> "ECondSimple"
+    | EGetArray -> "EGetArray"
+    | EUnknown -> "EUnknown"
+    | EPattern -> "EPattern"
     | LEIgnore -> "LEIgnore"
     | LETyped -> "LETyped"
     | LELocalVar -> "LELocalVar"
+    | LEGlobalVar -> "LEGlobalVar"
     | LESlice -> "LESlice"
-    | LESetRecordField -> "LESetRecordField"
-    | LESetBitField -> "LESetBitField"
-    | LESetBitFields -> "LESetBitFields"
-    | LETupleUnpack -> "LETupleUnpack"
-    | Pass -> "Pass"
-    | Assign -> "Assign"
-    | ReturnOne -> "ReturnOne"
-    | ReturnNone -> "ReturnNone"
-    | Then -> "Then"
+    | LESetArray -> "LESetArray"
+    | LESetField -> "LESetField"
+    | LESetFields -> "LESetFields"
+    | LETuple -> "LETuple"
+    | LEUndefIdentV0 -> "LEUndefIdentV0"
+    | LEUndefIdentV1 -> "LEUndefIdentV1"
+    | PAll -> "PAll"
+    | PAny -> "PAny"
+    | PGeq -> "PGeq"
+    | PLeq -> "PLeq"
+    | PNot -> "PNot"
+    | PRange -> "PRange"
+    | PSingle -> "PSingle"
+    | PMask -> "PMask"
+    | PTuple -> "PTuple"
+    | LDIgnore -> "LDIgnore"
+    | LDVar -> "LDVar"
+    | LDTypedVar -> "LDTypedVar"
+    | LDUninitialisedVar -> "LDUninitialisedVar"
+    | LDTuple -> "LDTuple"
+    | LDTypedTuple -> "LDTypedTuple"
+    | LDUninitialisedTuple -> "LDUninitialisedTuple"
+    | SPass -> "SPass"
+    | SAssignCall -> "SAssignCall"
+    | SAssignTuple -> "SAssignTuple"
+    | SAssign -> "SAssign"
+    | SReturnOne -> "SReturnOne"
+    | SReturnNone -> "SReturnNone"
+    | SReturnSome -> "SReturnSome"
+    | SThen -> "SThen"
     | SCall -> "SCall"
     | SCond -> "SCond"
-    | Assert -> "Assert"
+    | SCase -> "SCase"
+    | SAssert -> "SAssert"
+    | SWhile -> "SWhile"
+    | SRepeat -> "SRepeat"
+    | SFor -> "SFor"
+    | SThrowNone -> "SThrowNone"
+    | SThrowSomeTyped -> "SThrowSomeTyped"
+    | SThrowSome -> "SThrowSome"
+    | STry -> "STry"
+    | SDeclSome -> "SDeclSome"
+    | SDeclNone -> "SDeclNone"
+    | SDebug -> "SDebug" 
 
   let pp f r = to_string r |> Format.pp_print_string f
 
@@ -70,33 +144,52 @@ module Rule = struct
       Lit;
       IgnoreTypedExpr;
       ELocalVar;
-      GlobalConst;
+      EGlobalVar;
       Binop;
       Unop;
       ECond;
       ESlice;
       ECall;
       ERecord;
-      GetRecordField;
-      GetBitFields;
-      GetBitField;
+      EGetBitField;
+      EGetBitFields;
+      EUnknown;
+      EPattern;
+      EGetArray;
+      ECondSimple;
+      EUndefIdent;
       EConcat;
       LEIgnore;
       LETyped;
       LELocalVar;
+      LEGlobalVar;
       LESlice;
-      LESetRecordField;
-      LESetBitField;
-      LESetBitFields;
-      LETupleUnpack;
-      Pass;
-      Assign;
-      ReturnOne;
-      ReturnNone;
-      Then;
+      LESetArray;
+      LESetField;
+      LESetFields;
+      LETuple;
+      SPass;
+      SAssignCall;
+      SAssignTuple;
+      SAssign;
+      SReturnOne;
+      SReturnSome;
+      SReturnNone;
+      SThen;
       SCall;
       SCond;
-      Assert;
+      SCase;
+      SAssert;
+      SWhile;
+      SRepeat;
+      SFor;
+      SThrowNone;
+      SThrowSomeTyped;
+      SThrowSome;
+      STry;
+      SDeclSome;
+      SDeclNone;
+      SDebug;
     ]
 
   let all_nb = List.length all
